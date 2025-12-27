@@ -96,7 +96,7 @@
 
    Вот содержимое [postgres0.yml](postgres0.yml):
    
-   ```postgres0.yml
+   ```yml
    scope: my_cluster # Имя нашего кластера
    name: postgresql0 # Имя первой ноды
    restapi: # Адреса первой ноды
