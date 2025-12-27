@@ -47,52 +47,52 @@
 
    ```yml
    services:
-   pg-master:
-     build: .
-     image: localhost/postres:patroni # имя для кастомного образа из Dockerfile, можно задать любое
-     container_name: pg-master # Будущий адрес первой ноды
-     restart: always
-     hostname: pg-master
-     environment:
-       POSTGRES_USER: postgres
-       POSTGRES_PASSWORD: postgres
-       PGDATA: '/var/lib/postgresql/data/pgdata'
-     expose:
-       - 8008
-     ports:
-       - 5433:5432
-     volumes:
-       - pg-master:/var/lib/postgresql/data
-     command: patroni /postgres0.yml
+     pg-master:
+       build: .
+       image: localhost/postres:patroni # имя для кастомного образа из Dockerfile, можно задать любое
+       container_name: pg-master # Будущий адрес первой ноды
+       restart: always
+       hostname: pg-master
+       environment:
+         POSTGRES_USER: postgres
+         POSTGRES_PASSWORD: postgres
+         PGDATA: '/var/lib/postgresql/data/pgdata'
+       expose:
+         - 8008
+       ports:
+         - 5433:5432
+       volumes:
+         - pg-master:/var/lib/postgresql/data
+       command: patroni /postgres0.yml
    
-   pg-slave:
-     build: .
-     image: localhost/postres:patroni # имя для кастомного образа из Dockerfile, можно задать любое
-     container_name: pg-slave # Будущий адрес второй ноды
-     restart: always
-     hostname: pg-slave
-     expose:
-       - 8008
-     ports:
-       - 5434:5432
-     volumes:
-       - pg-slave:/var/lib/postgresql/data
-     environment:
-       POSTGRES_USER: postgres
-       POSTGRES_PASSWORD: postgres
-       PGDATA: '/var/lib/postgresql/data/pgdata'
-     command: patroni /postgres1.yml
+     pg-slave:
+       build: .
+       image: localhost/postres:patroni # имя для кастомного образа из Dockerfile, можно задать любое
+       container_name: pg-slave # Будущий адрес второй ноды
+       restart: always
+       hostname: pg-slave
+       expose:
+         - 8008
+       ports:
+         - 5434:5432
+       volumes:
+         - pg-slave:/var/lib/postgresql/data
+       environment:
+         POSTGRES_USER: postgres
+         POSTGRES_PASSWORD: postgres
+         PGDATA: '/var/lib/postgresql/data/pgdata'
+       command: patroni /postgres1.yml
    
-   zoo:
-     image: confluentinc/cp-zookeeper:7.7.1
-     container_name: zoo # Будущий адрес зукипера
-     restart: always
-     hostname: zoo
-     ports:
-       - 2181:2181
-     environment:
-       ZOOKEEPER_CLIENT_PORT: 2181
-       ZOOKEEPER_TICK_TIME: 2000
+     zoo:
+       image: confluentinc/cp-zookeeper:7.7.1
+       container_name: zoo # Будущий адрес зукипера
+       restart: always
+       hostname: zoo
+       ports:
+         - 2181:2181
+       environment:
+         ZOOKEEPER_CLIENT_PORT: 2181
+         ZOOKEEPER_TICK_TIME: 2000
    
    volumes:
      pg-master:
@@ -108,6 +108,7 @@
    ```yml
    scope: my_cluster # Имя нашего кластера
    name: postgresql0 # Имя первой ноды
+   
    restapi: # Адреса первой ноды
      listen: pg-master:8008
      connect_address: pg-master:8008
@@ -173,6 +174,7 @@
    ```yml
    scope: my_cluster # Имя нашего кластера
    name: postgresql1 # Имя второй ноды
+   
    restapi: # Адреса второй ноды
      listen: pg-slave:8008
      connect_address: pg-slave:8008
@@ -311,4 +313,79 @@
    ```sql
    CREATE TABLE test_replication (id SERIAL PRIMARY KEY, data TEXT, created_at TIMESTAMP DEFAULT NOW());
    INSERT INTO test_replication (data) VALUES ('Данные с мастера');
+   ```
+
+   Все создалось на мастер-ноде:
+
+   ![img_9.png](img_9.png)
+
+   Проверяем репликации на реплике:
+
+3. Заходим в подключение **pg-slave** и наблюдаем магию: во второй базе данных автоматически создалась такая же таблица с такими же данными
+   
+   ####
+
+   ![img_10.png](img_10.png)
+
+   Да, мы не догадались латиницей записывать, но ничего страшного - все равно видно, что репликация работает.
+
+4. В подключении **pg-slave** пробуем провести какую-нибудь операцию на редактирование. Например, попытаемся вставить новые данные в таблицу, или вовсе удалить ее. Получим отказ, т.к. эта нода работает в режиме _slave/readonly_
+   
+   ####
+
+   ![img_11.png](img_11.png)
+
+   Вы не обманули, спасибо!
+
+### Часть 3. Делаем ~~среднего роста~~ высокую доступность
+
+1. Для балансировки трафика нам нужен специальное ПО, собственно балансировщик. Например, [HAProxy](https://www.haproxy.org/) — добавляем его в `docker-compose.yml`:
+
+   ```yml
+   haproxy:
+     image: haproxy:3.0
+     container_name: postgres_entrypoint # Это будет адрес подключения к БД, можно выбрать любой
+     ports:
+       - 5432:5432 # Это будет порт подключения к БД, можно выбрать любой
+       - 7000:7000
+     depends_on: # Не забываем убедиться, что сначала все корректно поднялось
+       - pg-master
+       - pg-slave
+       - zoo
+     volumes:
+       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+   ```
+   
+   ####
+
+   В раздел `services` ам нужно добавить этот кусочек кода.
+
+2. Не забываем создать упомянутый выше `haproxy.cfg` со следующим содержимым:
+
+   ```cfg
+   global
+       maxconn 100
+
+   defaults
+       log global
+       mode tcp
+       retries 3
+       timeout client 30m
+       timeout connect 4s
+       timeout server 30m
+       timeout check 5s
+   
+   listen stats
+       mode http
+       bind *:7000
+       stats enable
+       stats uri /
+   
+   listen postgres
+       bind *:5432 # Выбранный порт из docker-compose.yml
+       option httpchk
+       http-check expect status 200 # Описываем нашу проверку доступности (в данном случае обычный HTTP-пинг)
+       default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+       server postgresql_pg_master_5432 pg-master:5432 maxconn 100 check port 8008 # Адрес первой ноды постгреса
+       server postgresql_pg_slave_5432 pg-slave:5432 maxconn 100 check port 8008 # Адрес второй ноды постгреса
    ```

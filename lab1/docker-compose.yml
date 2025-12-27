@@ -46,6 +46,19 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
+  haproxy:
+    image: haproxy:3.0
+    container_name: postgres_entrypoint # Это будет адрес подключения к БД, можно выбрать любой
+    ports:
+      - 5432:5432 # Это будет порт подключения к БД, можно выбрать любой
+      - 7000:7000
+    depends_on: # Не забываем убедиться, что сначала все корректно поднялось
+      - pg-master
+      - pg-slave
+      - zoo
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+
 volumes:
   pg-master:
   pg-slave:
