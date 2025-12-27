@@ -16,30 +16,24 @@ bootstrap:
     maximum_lag_on_failover: 10485760
     master_start_timeout: 300
     synchronous_mode: true
+
     postgresql:
-      use_pg_rewind: true
       use_slots: true
-      parameters:
-        wal_level: replica
-        hot_standby: "on"
-        wal_keep_segments: 8
-        max_wal_senders: 10
-        max_replication_slots: 10
-        wal_log_hints: "on"
-        archive_mode: "always"
-        archive_timeout: 1800s
-        archive_command: mkdir -p /tmp/wal_archive && test ! -f /tmp/wal_archive/%f && cp %p /tmp/wal_archive/%f
 
   pg_hba:
   - host replication replicator 0.0.0.0/0 md5
   - host all all 0.0.0.0/0 md5
 
 postgresql:
+  use_pg_rewind: true
+  remove_data_directory_on_rewind_failure: true
+
   listen: 0.0.0.0:5432
   connect_address: pg-master:5432 # Адрес первой ноды
   data_dir: /var/lib/postgresql/data/postgresql0 # Место хранения данных первой ноды
   bin_dir: /usr/lib/postgresql/15/bin
   pgpass: /tmp/pgpass0
+
   authentication:
     replication: # логопасс для репликаци, при желании можно поменять
       username: replicator
@@ -47,8 +41,22 @@ postgresql:
     superuser: # админский логопасс, при желании можно поменять (в том числе в файле compose)
       username: postgres
       password: postgres
+
   parameters:
     unix_socket_directories: '.'
+    wal_level: replica
+    hot_standby: "on"
+    wal_keep_segments: 8
+    max_wal_senders: 10
+    max_replication_slots: 10
+    wal_log_hints: "on"
+    archive_mode: "always"
+    archive_timeout: 1800s
+    archive_command: mkdir -p /tmp/wal_archive && test ! -f /tmp/wal_archive/%f && cp %p /tmp/wal_archive/%f
+
+  recovery_conf:
+    restore_command: cp /tmp/wal_archive/%f %p
+    recovery_target_timeline: 'latest'
 
 watchdog:
   mode: off
